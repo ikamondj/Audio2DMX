@@ -11,9 +11,10 @@ use serde::Deserialize;
 use serde_json::Value;
 
 
-use audio::audio_loop;
-use state::AppState;
-use state::create_app_state;
+use Audio2DMX::audio::audio_loop;
+use Audio2DMX::state::AppState;
+use Audio2DMX::state::create_app_state;
+use Audio2DMX::effects::EffectSuite;
 
 #[derive(Deserialize)]
 struct SetRequest {
