@@ -6,7 +6,8 @@ use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use std::process::Stdio;
 use reqwest::Client;
-use anyhow::{Result, anyhow};
+use std::net::UdpSocket;
+use std::io::Result;
 
 pub async fn spawn_olad() {
     //
@@ -89,7 +90,7 @@ pub async fn spawn_olad() {
     });
 }
 
-async fn install_ola() -> Result<(), Box<dyn std::error::Error>> {
+async fn install_ola() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     let os = std::env::consts::OS;
 
     match os {
@@ -103,7 +104,7 @@ async fn install_ola() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn install_ola_linux() -> Result<(), Box<dyn std::error::Error>> {
+async fn install_ola_linux() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     // Try apt first (Debian, Ubuntu, Raspberry Pi OS)
     let is_apt = Command::new("which")
         .arg("apt")
@@ -153,7 +154,7 @@ async fn install_ola_linux() -> Result<(), Box<dyn std::error::Error>> {
     Err("Linux detected but no known package manager found for installing OLA".into())
 }
 
-async fn install_ola_macos() -> Result<(), Box<dyn std::error::Error>> {
+async fn install_ola_macos() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     println!("[OLA] Installing OLA via Homebrew…");
 
     let brew_exists = Command::new("which")
@@ -180,27 +181,57 @@ async fn install_ola_macos() -> Result<(), Box<dyn std::error::Error>> {
 
 
 
+pub fn send_artnet_dmx(universe: u16, channels: &[u8]) -> Result<()> {
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+
+    // Art-Net packet
+    let mut packet = Vec::new();
+    packet.extend_from_slice(b"Art-Net\0");            // ID
+    packet.extend_from_slice(&0x0050u16.to_le_bytes()); // OpOutput (little endian)
+    packet.extend_from_slice(&0x000eu16.to_be_bytes()); // ProtVerHi=0, ProtVerLo=14
+    packet.push(0);                                     // Sequence
+    packet.push(0);                                     // Physical
+    packet.extend_from_slice(&universe.to_le_bytes());  // Universe (little endian)
+    packet.extend_from_slice(&(channels.len() as u16).to_be_bytes()); // Data length (big endian)
+    packet.extend_from_slice(channels);                 // DMX Data
+
+    socket.send_to(&packet, "127.0.0.1:6454")?;
+    Ok(())
+}
+
+
+
+    
+
 pub async fn send_dmx_frame(value: &Value) -> Result<()> {
-    let channels_val = value
-        .get("channels")
-        .ok_or_else(|| anyhow!("missing 'channels' field in DMX frame"))?;
+    // 1. Extract channels object
+    let Some(chobj) = value.get("channels") else {
+        eprintln!("[DMX ERROR] send_dmx_frame: missing 'channels' in JSON");
+        return Ok(()); // Don't crash audio thread
+    };
 
-    let payload = json!({
-        "u": 1,
-        "d": channels_val
-    });
+    let Some(map) = chobj.as_object() else {
+        eprintln!("[DMX ERROR] send_dmx_frame: channels is not an object");
+        return Ok(());
+    };
 
-    let client = Client::new();
+    // 2. Create a full 512-channel DMX buffer
+    let mut dmx = vec![0u8; 512];
 
-    let resp = client
-        .post("http://localhost:9090/set_dmx")
-        .json(&payload)
-        .send()
-        .await?;   // works now
-
-    if !resp.status().is_success() {
-        return Err(anyhow!("OLA returned HTTP status {}", resp.status()));
+    // 3. Fill DMX array from the JSON object
+    for (ch_str, v) in map.iter() {
+        if let Ok(ch) = ch_str.parse::<usize>() {
+            if ch >= 1 && ch <= 512 {
+                if let Some(val) = v.as_u64() {
+                    dmx[ch - 1] = val.min(255) as u8;
+                }
+            }
+        }
     }
+
+    // 4. Send via ArtNet (universe 0)
+    // If you want to expose universe selection later, change this argument.
+    send_artnet_dmx(0, &dmx)?;
 
     Ok(())
 }
