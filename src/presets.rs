@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use crate::effects::{
     EffectSuite,
-    Effect,
-    ToggleEffect,
     SceneToggleEffect,
     LinkEffect
 };
@@ -979,4 +977,66 @@ pub fn blue_business_suite(n_bins: usize) -> EffectSuite {
     }
 
     suite
+}
+
+
+// ==== PRESET NAMES =====
+pub const PRESET_NAMES: [&str; 11] = [
+    "RB Jams",
+    "Solid Wash",
+    "Gemstone",
+    "Winter Glitter",
+    "Laser Focus",
+    "Motor Function",
+    "True Lights",
+    "Purp Groovin",
+    "Angel Pallet",
+    "RedRoom",
+    "blue business",
+];
+
+
+// ============================================================
+// 1. ORDERED VECTOR LUT
+//    Returns Vec<(name, EffectSuite)> in consistent order
+// ============================================================
+
+pub fn effect_suite_vec(n_bins: usize) -> Vec<EffectSuite> {
+    vec![
+        (rb_jams_suite(n_bins)),
+        (solid_wash_suite(n_bins)),
+        (gemstone_suite(n_bins)),
+        (winter_glitter_suite(n_bins)),
+        (laser_focus_suite(n_bins)),
+        (motor_function_suite(n_bins)),
+        (true_lights_suite(n_bins)),
+        (purp_groovin_suite(n_bins)),
+        (angel_pallet_suite(n_bins)),
+        (redroom_suite(n_bins)),
+        (blue_business_suite(n_bins)),
+    ]
+}
+
+
+// ============================================================
+// 2. HASHMAP LUT
+//    Returns HashMap<String, EffectSuite> for fast lookup
+// ============================================================
+
+pub fn effect_suite_map(n_bins: usize) -> HashMap<String, EffectSuite> {
+    let mut m = HashMap::new();
+
+    m.insert("RB Jams".to_string(),        rb_jams_suite(n_bins));
+    m.insert("Solid Wash".to_string(),     solid_wash_suite(n_bins));
+    m.insert("Gemstone".to_string(),       gemstone_suite(n_bins));
+    m.insert("Winter Glitter".to_string(), winter_glitter_suite(n_bins));
+    m.insert("Laser Focus".to_string(),    laser_focus_suite(n_bins));
+    m.insert("Motor Function".to_string(), motor_function_suite(n_bins));
+    m.insert("True Lights".to_string(),    true_lights_suite(n_bins));
+    m.insert("Purp Groovin".to_string(),   purp_groovin_suite(n_bins));
+    m.insert("Angel Pallet".to_string(),   angel_pallet_suite(n_bins));
+    m.insert("RedRoom".to_string(),        redroom_suite(n_bins));
+    m.insert("blue business".to_string(),  blue_business_suite(n_bins));
+
+    m
 }

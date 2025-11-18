@@ -187,13 +187,20 @@ impl EffectSuite {
         self.effects.push(Box::new(eff));
     }
 
-    pub fn process(&self, bins: &[f32]) -> String {
-        let mut dmx = HashMap::new();
+    /// Return a real JSON value, not a string  
+    /// Ensure DMX values stay in range [0,255]
+    pub fn process(&self, bins: &[f32]) -> serde_json::Value {
+        let mut dmx: HashMap<u16, u8> = HashMap::new();
 
+        // apply each effect; effects write f32 values for flexibility
         for eff in &self.effects {
             eff.apply(bins, &mut dmx);
         }
 
-        serde_json::to_string(&DmxFrame { channels: dmx }).unwrap()
+        // Wrap into a DMX frame
+        serde_json::json!(DmxFrame {
+            channels: dmx
+        })
     }
 }
+

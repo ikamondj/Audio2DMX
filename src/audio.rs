@@ -1,61 +1,40 @@
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use realfft::RealFftPlanner;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self};
 use std::{
     time::Duration,
 };
 
+
+use std::collections::HashMap;
 use crate::state::AppState;
+use crate::effects::EffectSuite;
+use crate::dmx::send_dmx_frame;
 
 
+pub async fn audio_loop(state: AppState, glob_effects: HashMap<String, EffectSuite>, ord_effects: Vec<EffectSuite>, num_bins:usize) {
+    let device = state.device.clone();   // <── use the selected device ONCE
 
-pub async fn audio_loop(state: AppState) {
     loop {
         //
-        // 1. Read initial config before opening device
+        // 1. Read ONLY fft_size from the map
         //
-        let (device_name, fft_size) = {
-            let map = state.store.read().unwrap();
-            let dev = map.get("audio_device")
-                .and_then(|v| v.as_str())
-                .unwrap_or("default")
-                .to_string();
+        let fft_size: usize = num_bins as usize;
 
-            let fft = map.get("fft_size")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(512) as usize;
-
-            (dev, fft)
-        };
-
-        println!("\n[Audio] Opening device '{device_name}' with fft={fft_size}");
+        println!("[Audio] Opening device {:?} with fft={}", device.name(), fft_size);
 
         //
-        // 2. Open audio input device
+        // 2. Use THIS DEVICE only
         //
-        let host = cpal::default_host();
-
-        let device = if device_name == "default" {
-            host.default_input_device()
-                .expect("No default input device")
-        } else {
-            host.devices()
-                .unwrap()
-                .find(|d| d.name().unwrap() == device_name)
-                .unwrap_or_else(|| {
-                    panic!("Audio device '{device_name}' not found")
-                })
-        };
-
         let config = device.default_input_config().unwrap();
         println!("[Audio] Actual input config: {:?}", config);
 
         //
-        // 3. Channel between CPAL callback and FFT thread
+        // 3. Channel for audio samples
         //
-        let (tx, rx) = std::sync::mpsc::channel::<f32>();
+        let (tx, rx) = mpsc::channel::<f32>();
 
-        // Build input stream
+        // Build the stream
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => device.build_input_stream(
                 &config.into(),
@@ -67,16 +46,14 @@ pub async fn audio_loop(state: AppState) {
                 move |err| eprintln!("Stream error: {err}"),
                 None,
             ),
-            other => panic!("Unsupported audio format {:?}", other),
-        }
-        .expect("Failed to build input stream");
+            fmt => panic!("Unsupported sample format {:?}", fmt),
+        }.expect("Failed to build input stream");
 
         stream.play().expect("Failed to start audio stream");
 
         //
         // 4. Setup FFT
         //
-        use realfft::RealFftPlanner;
         let mut planner = RealFftPlanner::<f32>::new();
         let r2c = planner.plan_fft_forward(fft_size);
 
@@ -86,26 +63,21 @@ pub async fn audio_loop(state: AppState) {
         println!("[Audio] Stream started. Entering processing loop...");
 
         //
-        // 5. AUDIO PROCESS INNER LOOP
+        // 5. Inner audio loop
         //
         loop {
             //
-            // A. Check for device or FFT-size change
+            // A. Check ONLY if FFT size changed
             //
             {
                 let map = state.store.read().unwrap();
-
-                let new_dev = map.get("audio_device")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("default");
-
                 let new_fft = map.get("fft_size")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(fft_size as u64) as usize;
 
-                if new_dev != device_name || new_fft != fft_size {
-                    println!("[Audio] Configuration changed, restarting audio stream...");
-                    break; // break inner loop → restart device
+                if new_fft != fft_size {
+                    println!("[Audio] FFT size changed → restarting stream...");
+                    break;
                 }
             }
 
@@ -123,20 +95,71 @@ pub async fn audio_loop(state: AppState) {
             }
 
             //
-            // C. Run FFT
+            // C. FFT
             //
             r2c.process(&mut input, &mut spectrum).unwrap();
 
             //
-            // D. Convert FFT to magnitudes
+            // D. Convert to magnitudes
             //
             let magnitudes: Vec<f32> = spectrum.iter().map(|c| c.norm()).collect();
 
-            // Example: print first few bins for debugging
-            println!("bins: {:?}", &magnitudes[..8.min(magnitudes.len())]);
+            let n = magnitudes.len();
+            let mut weights = Vec::with_capacity(n);
+
+            for i in 0..n {
+                let freq_ratio = i as f32 / n as f32;  // 0.0 = bass, 1.0 = high
+                let w = 0.3 + 0.7 * freq_ratio;        // linear tilt upward
+                weights.push(w);
+            }
+
+            let regularized: Vec<f32> = magnitudes
+                .iter()
+                .zip(weights.iter())
+                .map(|(&m, &w)| m * w)
+                .collect();
+
+            let transformed: Vec<f32> = regularized
+                .iter()
+                .map(|&x| {
+                    let y = 1.0 - (4.0_f32).powf(-x);
+                    y.clamp(0.0, 1.0)
+                })
+                .collect();
+
+            let mut cumulative = Vec::with_capacity(transformed.len());
+            let mut running_sum = 0.0_f32;
+
+            for &val in &transformed {
+                running_sum += val;
+                cumulative.push(running_sum);
+            }
+
+            let map = state.store.read().unwrap();
+
+            if let Some(effect_val) = map.get("effect") {
+
+                // Case 1: string effect key, like "pulse" or "wave"
+                if let Some(effect_str) = effect_val.as_str() {
+                    if let Some(suite) = glob_effects.get(effect_str) {
+                        let frame_json = suite.process(&cumulative);
+                        let _ = send_dmx_frame(&frame_json).await;
+                    }
+
+                // Case 2: numeric effect index, like 0, 1, 2...
+                } else if let Some(idx) = effect_val.as_u64() {
+                    let idx = idx as usize;
+
+                    if idx < ord_effects.len() {
+                        if let Some(suite) = ord_effects.get(idx) {
+                            let frame_json = suite.process(&cumulative);
+                            let _ = send_dmx_frame(&frame_json).await;
+                        }
+                    }
+                }
+            }           
         }
 
-        // Wait a moment before recreating stream
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
