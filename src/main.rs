@@ -58,7 +58,7 @@ async fn main() {
             // Build your Axum app as before
             let app = Router::new()
                 .route("/set", post(set_value))
-                .route("/get/:key", get(get_value))
+                .route("/get/{key}", get(get_value))
                 .with_state(state);
 
             let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
