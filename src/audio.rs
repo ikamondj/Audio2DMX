@@ -154,7 +154,6 @@ pub async fn audio_loop(state: AppState, glob_effects: HashMap<String, EffectSui
             }
 
             print!("\r{}", logfft);
-            io::stdout().flush().unwrap();
 
             let map = state.store.read().unwrap();
 
