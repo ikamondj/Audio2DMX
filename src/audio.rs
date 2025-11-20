@@ -1,6 +1,5 @@
 use cpal::traits::{DeviceTrait, StreamTrait};
 use realfft::RealFftPlanner;
-use std::io::Write;
 use std::sync::mpsc::{self};
 use std::{
     time::Duration,
@@ -12,46 +11,26 @@ use crate::state::AppState;
 use crate::effects::EffectSuite;
 use crate::dmx::send_dmx_frame;
 
-
-fn audio_print(p: u64) -> char {
-    if p < (1 * 255 / 7) {
-        return '.';
-    } else if p < (2 * 255 / 7) {
-        return ',';
-    } else if p < (3 * 255 / 7) {
-        return ':';
-    } else if p < (4 * 255 / 7) {
-        return ';';
-    }else if p < (5 * 255 / 7) {
-        return 'i';
-    }else if p < (6 * 255 / 7) {
-        return 'I';
-    }
-    return '|';
-}
-
 pub fn get_logs_dmx(frame_json: &serde_json::Value) -> String {
-    // Always show 512 channels worth of characters.
-    let mut chars = vec!['.'; 512];
+    let mut parts: Vec<String> = Vec::new();
 
-    // Make sure it's an object before iterating.
     if let Some(map) = frame_json.as_object() {
-        for (key, val) in map.iter() {
-            if let Ok(ch) = key.parse::<usize>() {
-                if (1..=512).contains(&ch) {
-                    if let Some(v) = val.as_u64() {
-                        let clamped = v.min(255);
-                        chars[ch - 1] = audio_print(clamped);
-                    }
-                }
-            }
+        // Iterate channels in numerical order
+        let mut entries: Vec<(usize, u64)> = map.iter()
+            .filter_map(|(k, v)| {
+                k.parse::<usize>().ok().zip(v.as_u64())
+            })
+            .collect();
+
+        entries.sort_by_key(|(ch, _)| *ch);
+
+        for (ch, val) in entries {
+            parts.push(format!("{}={}", ch, val.min(255)));
         }
     }
 
-    // Convert Vec<char> → String
-    chars.into_iter().collect()
+    parts.join(" ")
 }
-
 
 pub async fn audio_loop(state: AppState, glob_effects: HashMap<String, EffectSuite>, ord_effects: Vec<EffectSuite>, num_bins:usize) {
     let device = state.device.clone();   // <── use the selected device ONCE
@@ -206,7 +185,7 @@ pub async fn audio_loop(state: AppState, glob_effects: HashMap<String, EffectSui
                         let logch: String = get_logs_dmx(&frame_json);
 
                         print!("\r{}  -  {}", logfft, logch);
-                        std::io::stdout().flush().unwrap();
+
                         let _ = send_dmx_frame(&frame_json).await;
                     }
 
@@ -220,7 +199,6 @@ pub async fn audio_loop(state: AppState, glob_effects: HashMap<String, EffectSui
                             let logch: String = get_logs_dmx(&frame_json);
 
                             print!("\r{}  -  {}", logfft, logch);
-                            std::io::stdout().flush().unwrap();
                             let _ = send_dmx_frame(&frame_json).await;
                             
                         }
