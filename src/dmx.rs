@@ -5,7 +5,7 @@ use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use std::process::Stdio;
 use std::net::UdpSocket;
-use std::io::{Result, Write};
+use std::io::Result;
 
 pub async fn spawn_olad() {
     //
@@ -199,22 +199,6 @@ pub fn send_artnet_dmx(universe: u16, channels: &[u8]) -> Result<()> {
 
 
 
-fn audio_print(p: u64) -> char {
-    if p < (1 * 255 / 7) {
-        return '.';
-    } else if p < (2 * 255 / 7) {
-        return ',';
-    } else if p < (3 * 255 / 7) {
-        return ':';
-    } else if p < (4 * 255 / 7) {
-        return ';';
-    }else if p < (5 * 255 / 7) {
-        return 'i';
-    }else if p < (6 * 255 / 7) {
-        return 'I';
-    }
-    return '|';
-}
 
 pub async fn send_dmx_frame(value: &Value) -> Result<()> {
     // 1. Extract channels object
@@ -231,7 +215,7 @@ pub async fn send_dmx_frame(value: &Value) -> Result<()> {
     // 2. Create a full 512-channel DMX buffer
     let mut dmx = vec![0u8; 512];
 
-    let mut outlog = vec!['.'; 512];  // or whatever size you need
+    
 
     // 3. Fill DMX array from the JSON object
     for (ch_str, v) in map.iter() {
@@ -239,15 +223,10 @@ pub async fn send_dmx_frame(value: &Value) -> Result<()> {
             if ch >= 1 && ch <= 512 {
                 if let Some(val) = v.as_u64() {
                     dmx[ch - 1] = val.min(255) as u8;
-                    outlog[ch - 1] = audio_print(val.min(255));
                 }
             }
         }
     }
-
-    let s: String = outlog.iter().collect();
-    print!("  -  {}", s);
-    std::io::stdout().flush().unwrap();
 
 
     // 4. Send via ArtNet (universe 0)

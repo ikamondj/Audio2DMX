@@ -1,6 +1,6 @@
 use cpal::traits::{DeviceTrait, StreamTrait};
 use realfft::RealFftPlanner;
-use std::io::{self, Write};
+use std::io::Write;
 use std::sync::mpsc::{self};
 use std::{
     time::Duration,
@@ -11,6 +11,46 @@ use std::collections::HashMap;
 use crate::state::AppState;
 use crate::effects::EffectSuite;
 use crate::dmx::send_dmx_frame;
+
+
+fn audio_print(p: u64) -> char {
+    if p < (1 * 255 / 7) {
+        return '.';
+    } else if p < (2 * 255 / 7) {
+        return ',';
+    } else if p < (3 * 255 / 7) {
+        return ':';
+    } else if p < (4 * 255 / 7) {
+        return ';';
+    }else if p < (5 * 255 / 7) {
+        return 'i';
+    }else if p < (6 * 255 / 7) {
+        return 'I';
+    }
+    return '|';
+}
+
+pub fn get_logs_dmx(frame_json: &serde_json::Value) -> String {
+    // Always show 512 channels worth of characters.
+    let mut chars = vec!['.'; 512];
+
+    // Make sure it's an object before iterating.
+    if let Some(map) = frame_json.as_object() {
+        for (key, val) in map.iter() {
+            if let Ok(ch) = key.parse::<usize>() {
+                if (1..=512).contains(&ch) {
+                    if let Some(v) = val.as_u64() {
+                        let clamped = v.min(255);
+                        chars[ch - 1] = audio_print(clamped);
+                    }
+                }
+            }
+        }
+    }
+
+    // Convert Vec<char> → String
+    chars.into_iter().collect()
+}
 
 
 pub async fn audio_loop(state: AppState, glob_effects: HashMap<String, EffectSuite>, ord_effects: Vec<EffectSuite>, num_bins:usize) {
@@ -153,7 +193,7 @@ pub async fn audio_loop(state: AppState, glob_effects: HashMap<String, EffectSui
                 }
             }
 
-            print!("\r{}", logfft);
+            
 
             let map = state.store.read().unwrap();
 
@@ -163,6 +203,10 @@ pub async fn audio_loop(state: AppState, glob_effects: HashMap<String, EffectSui
                 if let Some(effect_str) = effect_val.as_str() {
                     if let Some(suite) = glob_effects.get(effect_str) {
                         let frame_json = suite.process(&cumulative);
+                        let logch: String = get_logs_dmx(&frame_json);
+
+                        print!("\r{}  -  {}", logfft, logch);
+                        std::io::stdout().flush().unwrap();
                         let _ = send_dmx_frame(&frame_json).await;
                     }
 
@@ -173,7 +217,12 @@ pub async fn audio_loop(state: AppState, glob_effects: HashMap<String, EffectSui
                     if idx < ord_effects.len() {
                         if let Some(suite) = ord_effects.get(idx) {
                             let frame_json = suite.process(&cumulative);
+                            let logch: String = get_logs_dmx(&frame_json);
+
+                            print!("\r{}  -  {}", logfft, logch);
+                            std::io::stdout().flush().unwrap();
                             let _ = send_dmx_frame(&frame_json).await;
+                            
                         }
                     }
                 }
