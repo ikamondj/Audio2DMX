@@ -135,6 +135,25 @@ pub async fn audio_loop(state: AppState, glob_effects: HashMap<String, EffectSui
                 cumulative.push(running_sum);
             }
 
+            let mut logfft = String::new();
+            for x in transformed {
+                if x < 0.1 {
+                    logfft.push('.');
+                } else if x < 0.25 {
+                    logfft.push(',');
+                } else if x < 0.5 {
+                    logfft.push(':');
+                } else if x < 0.7 {
+                    logfft.push('i');
+                } else if x < 0.85 {
+                    logfft.push('I');
+                } else {
+                    logfft.push('|');
+                }
+            }
+
+            println!("{logfft}");
+
             let map = state.store.read().unwrap();
 
             if let Some(effect_val) = map.get("effect") {
