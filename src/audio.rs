@@ -1,5 +1,6 @@
 use cpal::traits::{DeviceTrait, StreamTrait};
 use realfft::RealFftPlanner;
+use std::io::{self, Write};
 use std::sync::mpsc::{self};
 use std::{
     time::Duration,
@@ -152,7 +153,8 @@ pub async fn audio_loop(state: AppState, glob_effects: HashMap<String, EffectSui
                 }
             }
 
-            println!("{logfft}");
+            print!("\r{}", logfft);
+            io::stdout().flush().unwrap();
 
             let map = state.store.read().unwrap();
 
